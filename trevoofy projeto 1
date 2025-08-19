@@ -1,0 +1,587 @@
+import os, json, textwrap, zipfile, pathlib
+
+root = pathlib.Path("/mnt/data/trevoofy-nest")
+dirs = [
+    "src",
+    "src/common",
+    "src/modules/auth",
+    "src/modules/users",
+    "src/modules/products",
+    "src/modules/affiliates",
+    "src/modules/checkout",
+    "src/modules/payments",
+    "src/modules/memberships",
+    "src/modules/courses",
+    "prisma",
+    ".github/workflows"
+]
+for d in dirs:
+    (root / d).mkdir(parents=True, exist_ok=True)
+
+# package.json
+package_json = {
+  "name": "trevoofy",
+  "version": "0.1.0",
+  "description": "Trevoofy - MVP (Hotmart-like) built with NestJS + Prisma + Postgres",
+  "scripts": {
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\"",
+    "prisma:gen": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "db:push": "prisma db push",
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/config": "^3.1.1",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/passport": "^10.0.3",
+    "@nestjs/platform-express": "^10.0.0",
+    "@prisma/client": "^5.19.0",
+    "argon2": "^0.31.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.0",
+    "cookie-parser": "^1.4.6",
+    "csurf": "^1.11.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "passport-local": "^1.0.0",
+    "prisma": "^5.19.0",
+    "reflect-metadata": "^0.2.2",
+    "rimraf": "^5.0.7",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.2",
+    "@nestjs/schematics": "^10.1.1",
+    "@nestjs/testing": "^10.4.1",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.12.12",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/passport-local": "^1.0.38",
+    "eslint": "^9.5.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "prettier": "^3.3.2",
+    "ts-node": "^10.9.2",
+    "tslib": "^2.6.2",
+    "typescript": "^5.4.5"
+  }
+}
+(root / "package.json").write_text(json.dumps(package_json, indent=2))
+
+# tsconfig.json
+tsconfig = {
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": True,
+    "removeComments": True,
+    "emitDecoratorMetadata": True,
+    "experimentalDecorators": True,
+    "allowSyntheticDefaultImports": True,
+    "target": "ES2020",
+    "sourceMap": True,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "esModuleInterop": True,
+    "strict": True,
+    "skipLibCheck": True
+  },
+  "exclude": ["node_modules", "dist"]
+}
+(root / "tsconfig.json").write_text(json.dumps(tsconfig, indent=2))
+
+# .env.example
+env_example = textwrap.dedent("""\
+NODE_ENV=development
+PORT=3000
+
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/trevoofy?schema=public"
+
+# JWT
+JWT_SECRET=change_me_please
+JWT_EXPIRES_IN=1d
+
+# CSRF
+CSRF_SECRET=another_secret_change_me
+
+# Payment providers (examples)
+STRIPE_SECRET=sk_test_xxx
+PAGARME_SECRET=ak_test_xxx
+
+# Storage
+AWS_S3_BUCKET=trevoofy-dev
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
+""")
+(root / ".env.example").write_text(env_example)
+
+# docker-compose.yml
+docker_compose = textwrap.dedent("""\
+version: '3.9'
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trevoofy
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+volumes:
+  db_data:
+""")
+(root / "docker-compose.yml").write_text(docker_compose)
+
+# src/main.ts
+main_ts = textwrap.dedent("""\
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
+import * as cookieParser from 'cookie-parser';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.use(helmet());
+  app.use(cookieParser());
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.enableCors({ origin: true, credentials: true });
+  await app.listen(process.env.PORT || 3000);
+  console.log(`🚀 Trevoofy API running on http://localhost:${process.env.PORT || 3000}`);
+}
+bootstrap();
+""")
+(root / "src/main.ts").write_text(main_ts)
+
+# src/app.module.ts
+app_module_ts = textwrap.dedent("""\
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { PrismaService } from './common/prisma.service';
+import { UsersModule } from './modules/users/users.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { ProductsModule } from './modules/products/products.module';
+import { AffiliatesModule } from './modules/affiliates/affiliates.module';
+import { CheckoutModule } from './modules/checkout/checkout.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { MembershipsModule } from './modules/memberships/memberships.module';
+import { CoursesModule } from './modules/courses/courses.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    UsersModule,
+    AuthModule,
+    ProductsModule,
+    AffiliatesModule,
+    CheckoutModule,
+    PaymentsModule,
+    MembershipsModule,
+    CoursesModule,
+  ],
+  providers: [PrismaService],
+})
+export class AppModule {}
+""")
+(root / "src/app.module.ts").write_text(app_module_ts)
+
+# Prisma service
+prisma_service = textwrap.dedent("""\
+import { INestApplication, Injectable, OnModuleInit } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+
+@Injectable()
+export class PrismaService extends PrismaClient implements OnModuleInit {
+  async onModuleInit() {
+    await this.$connect();
+  }
+
+  async enableShutdownHooks(app: INestApplication) {
+    this.$on('beforeExit', async () => {
+      await app.close();
+    });
+  }
+}
+""")
+(root / "src/common/prisma.service.ts").write_text(prisma_service)
+
+# Simple module template generator
+def module_files(name, routes):
+    class_name = name.capitalize()
+    module_dir = root / f"src/modules/{name}"
+    (module_dir / f"{name}.controller.ts").write_text(textwrap.dedent(f"""\
+import {{ Controller, Get, Post, Body, Param }} from '@nestjs/common';
+
+@Controller('{name}')
+export class {class_name}Controller {{
+  @Get()
+  health() {{
+    return {{ ok: true, service: '{name}' }};
+  }}
+  {routes}
+}}
+"""))
+    (module_dir / f"{name}.service.ts").write_text(textwrap.dedent(f"""\
+import {{ Injectable }} from '@nestjs/common';
+
+@Injectable()
+export class {class_name}Service {{
+  // TODO: implement business logic
+}}
+"""))
+    (module_dir / f"{name}.module.ts").write_text(textwrap.dedent(f"""\
+import {{ Module }} from '@nestjs/common';
+import {{ {class_name}Controller }} from './{name}.controller';
+import {{ {class_name}Service }} from './{name}.service';
+
+@Module({{
+  controllers: [{class_name}Controller],
+  providers: [{class_name}Service],
+  exports: [{class_name}Service],
+}})
+export class {class_name}Module {{}}
+"""))
+
+# Create modules with basic routes
+module_files("users", "@Get(':id') findOne(@Param('id') id: string) { return { id }; }")
+module_files("products", textwrap.dedent("""\
+@Post()
+create(@Body() dto: any) { return { created: true, dto }; }
+@Get(':id')
+findOne(@Param('id') id: string) { return { id }; }
+"""))
+module_files("affiliates", textwrap.dedent("""\
+@Post('apply')
+apply(@Body() dto: any) { return { status: 'pending', dto }; }
+@Post('links')
+links(@Body() dto: any) { return { code: 'AFF123', ...dto }; }
+"""))
+module_files("checkout", textwrap.dedent("""\
+@Post('sessions')
+createSession(@Body() dto: any) { return { client_secret: 'mock_cs', dto }; }
+"""))
+module_files("payments", textwrap.dedent("""\
+@Post('webhook')
+webhook(@Body() event: any) { return { received: true }; }
+"""))
+module_files("memberships", textwrap.dedent("""\
+@Post('enroll')
+enroll(@Body() dto: any) { return { enrolled: true, dto }; }
+"""))
+module_files("courses", textwrap.dedent("""\
+@Get(':id/lessons')
+lessons(@Param('id') id: string) { return [{ id: 1, title: 'Intro', hls_url_signed: 'signed_url' }]; }
+"""))
+
+# Auth minimal module
+auth_controller = textwrap.dedent("""\
+import { Controller, Post, Body } from '@nestjs/common';
+import * as argon2 from 'argon2';
+
+@Controller('auth')
+export class AuthController {
+  @Post('signup')
+  async signup(@Body() dto: any) {
+    const hash = await argon2.hash(dto.password || 'changeme');
+    return { user: { email: dto.email }, password_hash: hash };
+  }
+
+  @Post('login')
+  async login(@Body() dto: any) {
+    // TODO: validate user and return JWT
+    return { access_token: 'mock_jwt' };
+  }
+}
+""")
+auth_module = textwrap.dedent("""\
+import { Module } from '@nestjs/common';
+import { AuthController } from './auth.controller';
+
+@Module({
+  controllers: [AuthController],
+})
+export class AuthModule {}
+""")
+(root / "src/modules/auth/auth.controller.ts").write_text(auth_controller)
+(root / "src/modules/auth/auth.module.ts").write_text(auth_module)
+
+# Prisma schema (basic)
+prisma_schema = textwrap.dedent("""\
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          UserRole @default(BUYER)
+  twofaSecret   String?
+
+  creator       Creator?
+  affiliates    Affiliate[]
+  orders        Order[]
+  enrollments   Enrollment[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Creator {
+  id        String  @id @default(cuid())
+  user      User    @relation(fields: [userId], references: [id])
+  userId    String  @unique
+  kycStatus String  @default("pending")
+  companyInfo Json?
+  bankAccountId String?
+
+  products  Product[]
+  payouts   Payout[]
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  creator     Creator   @relation(fields: [creatorId], references: [id])
+  creatorId   String
+  type        ProductType
+  title       String
+  slug        String    @unique
+  priceCents  Int
+  status      String    @default("active")
+  accessPolicy String?
+
+  items       OrderItem[]
+  lessons     Lesson[]
+}
+
+model Price {
+  id          String   @id @default(cuid())
+  product     Product  @relation(fields: [productId], references: [id])
+  productId   String
+  currency    String
+  amountCents Int
+  recurring   Boolean  @default(false)
+  interval    String?
+  active      Boolean  @default(true)
+}
+
+model Affiliate {
+  id          String  @id @default(cuid())
+  user        User    @relation(fields: [userId], references: [id])
+  userId      String
+  approvalStatus String @default("pending")
+  cookieDays  Int      @default(60)
+  blockedSelfPurchase Boolean @default(true)
+
+  links       AffiliateLink[]
+  orderItems  OrderItem[]
+}
+
+model AffiliateLink {
+  id        String   @id @default(cuid())
+  affiliate Affiliate @relation(fields: [affiliateId], references: [id])
+  affiliateId String
+  product   Product  @relation(fields: [productId], references: [id])
+  productId String
+  code      String
+  landingUrl String?
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id        String   @id @default(cuid())
+  buyer     User     @relation(fields: [buyerId], references: [id])
+  buyerId   String
+  totalCents Int
+  currency  String   @default("BRL")
+  status    OrderStatus @default(PENDING)
+  source    String?
+  utmJson   Json?
+
+  items     OrderItem[]
+  payment   Payment?
+  createdAt DateTime @default(now())
+}
+
+model OrderItem {
+  id           String   @id @default(cuid())
+  order        Order    @relation(fields: [orderId], references: [id])
+  orderId      String
+  product      Product  @relation(fields: [productId], references: [id])
+  productId    String
+  priceCents   Int
+  quantity     Int      @default(1)
+  affiliate    Affiliate? @relation(fields: [affiliateId], references: [id])
+  affiliateId  String?
+  commissionCents Int    @default(0)
+}
+
+model Payment {
+  id          String  @id @default(cuid())
+  order       Order   @relation(fields: [orderId], references: [id])
+  orderId     String  @unique
+  provider    String
+  method      String
+  status      String
+  authorizationCode String?
+  pixQr       String?
+  paidAt      DateTime?
+}
+
+model Payout {
+  id          String  @id @default(cuid())
+  creator     Creator @relation(fields: [creatorId], references: [id])
+  creatorId   String
+  cycleMonth  String
+  amountCents Int
+  status      String   @default("pending")
+  irrfCents   Int      @default(0)
+  feesCents   Int      @default(0)
+}
+
+model Enrollment {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  product    Product  @relation(fields: [productId], references: [id])
+  productId  String
+  activatedAt DateTime?
+  expiresAt  DateTime?
+}
+
+model Lesson {
+  id           String   @id @default(cuid())
+  product      Product  @relation(fields: [productId], references: [id])
+  productId    String
+  title        String
+  hlsUrlSigned String
+  durationSeconds Int
+  freePreview  Boolean @default(false)
+}
+
+enum ProductType {
+  COURSE
+  EBOOK
+}
+
+enum UserRole {
+  BUYER
+  CREATOR
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  REFUNDED
+  CHARGEBACK
+}
+""")
+(root / "prisma/schema.prisma").write_text(prisma_schema)
+
+# seed.ts
+seed_ts = textwrap.dedent("""\
+import { PrismaClient, ProductType, UserRole } from '@prisma/client';
+import * as argon2 from 'argon2';
+
+const prisma = new PrismaClient();
+
+async function main() {
+  const passwordHash = await argon2.hash('admin123');
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@trevoofy.com' },
+    update: {},
+    create: {
+      name: 'Admin',
+      email: 'admin@trevoofy.com',
+      passwordHash,
+      role: UserRole.ADMIN,
+    },
+  });
+
+  const buyer = await prisma.user.create({
+    data: {
+      name: 'Comprador Teste',
+      email: 'buyer@trevoofy.com',
+      passwordHash: await argon2.hash('buyer123'),
+      role: UserRole.BUYER,
+    },
+  });
+
+  const creatorUser = await prisma.user.create({
+    data: {
+      name: 'Criador Teste',
+      email: 'creator@trevoofy.com',
+      passwordHash: await argon2.hash('creator123'),
+      role: UserRole.CREATOR,
+      creator: {
+        create: { kycStatus: 'approved' },
+      },
+    },
+    include: { creator: true },
+  });
+
+  const product = await prisma.product.create({
+    data: {
+      creatorId: creatorUser.creator!.id,
+      type: ProductType.COURSE,
+      title: 'Curso Trevoofy 101',
+      slug: 'curso-trevoofy-101',
+      priceCents: 9900,
+    },
+  });
+
+  await prisma.lesson.createMany({
+    data: [
+      { productId: product.id, title: 'Boas-vindas', hlsUrlSigned: 'signed_url_1', durationSeconds: 300, freePreview: true },
+      { productId: product.id, title: 'Módulo 1', hlsUrlSigned: 'signed_url_2', durationSeconds: 900 },
+    ],
+  });
+
+  console.log({ admin, buyer, product });
+}
+
+main().finally(async () => {
+  await prisma.$disconnect();
+});
+""")
+(root / "prisma/seed.ts").write_text(seed_ts)
+
+# README.md
+readme = textwrap.dedent("""\
+# Trevoofy — MVP (NestJS + Prisma + Postgres)
+
+> Seu pontapé inicial para criar uma plataforma tipo Hotmart.
+
+## 🚀 Stack
+- NestJS (API)
+- Prisma + Postgres (DB)
+- Redis (filas/sessões)
+- Docker Compose para dev
+
+## ▶️ Como rodar (dev)
+1) Copie o `.env.example` para `.env` e ajuste o `DATABASE_URL`.
+2) Suba o banco/redis:
+```bash
+docker-compose up -d
